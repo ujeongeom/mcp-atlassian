@@ -369,7 +369,19 @@ def main(
         ensure_clean_exit()
 
 
-__all__ = ["main", "__version__"]
+def main_jira() -> None:
+    """Jira-only MCP server entry point for Container Apps deployment."""
+    from .servers.jira_server import main
+    main()
+
+
+def main_confluence() -> None:
+    """Confluence-only MCP server entry point for Container Apps deployment."""
+    from .servers.confluence_server import main
+    main()
+
+
+__all__ = ["main", "main_jira", "main_confluence", "__version__"]
 
 if __name__ == "__main__":
     main()

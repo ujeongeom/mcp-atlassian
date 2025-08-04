@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "mcp-jira": {
+      "url": "https://mcp-jira-service.livelybeach-90f399a8.koreacentral.azurecontainerapps.io/mcp",
+      "headers": {
+        "Authorization": "Bearer ${JIRA_TOKEN}",
+        "X-User-Email": "${USER_EMAIL}",
+        "X-Jira-URL": "${JIRA_URL}"
+      }
+    },
+    "mcp-confluence": {
+      "url": "https://mcp-confluence-service.livelybeach-90f399a8.koreacentral.azurecontainerapps.io/mcp",
+      "headers": {
+        "Authorization": "Bearer ${CONFLUENCE_TOKEN}",
+        "X-User-Email": "${USER_EMAIL}",
+        "X-Confluence-URL": "${CONFLUENCE_URL}"
+      }
+    }
+  }
+} 

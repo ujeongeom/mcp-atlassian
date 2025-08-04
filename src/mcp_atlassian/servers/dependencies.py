@@ -200,19 +200,17 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
             logger.debug("get_jira_fetcher: Returning JiraFetcher from request.state.")
             return request.state.jira_fetcher
         user_auth_type = getattr(request.state, "user_atlassian_auth_type", None)
+        user_token = getattr(request.state, "user_atlassian_token", None)
+        
         logger.debug(f"get_jira_fetcher: User auth type: {user_auth_type}")
+        logger.debug(f"get_jira_fetcher: User token present: {user_token is not None}")
+        
         # If OAuth or API Token is present, create user-specific fetcher
-        if user_auth_type in ["oauth", "pat", "api_token"] and hasattr(
-            request.state, "user_atlassian_token"
-        ):
-            user_token = getattr(request.state, "user_atlassian_token", None)
+        if user_auth_type in ["oauth", "pat", "api_token"] and user_token:
             user_email = getattr(
                 request.state, "user_atlassian_email", None
             )  # May be None for PAT
             user_cloud_id = getattr(request.state, "user_atlassian_cloud_id", None)
-
-            if not user_token:
-                raise ValueError("User Atlassian token found in state but is empty.")
             credentials = {"user_email_context": user_email}
             if user_auth_type == "oauth":
                 credentials["oauth_access_token"] = user_token
@@ -234,9 +232,20 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
                 # 기본 설정으로 사용자별 설정 생성
                 from mcp_atlassian.jira.config import JiraConfig
                 import os
-                jira_url = os.getenv("JIRA_URL", "https://kautotest.atlassian.net")
+                
+                # 헤더에서 Jira URL 확인 (우선순위: 헤더 > 환경변수)
+                jira_url_header = request.headers.get("X-Jira-URL")
+                if jira_url_header and jira_url_header.strip():
+                    jira_url = jira_url_header.strip()
+                    logger.debug(f"Using Jira URL from header: {jira_url}")
+                else:
+                    jira_url = os.getenv("JIRA_URL")
+                    if not jira_url:
+                        raise ValueError("Jira URL is required. Please provide it via X-Jira-URL header or JIRA_URL environment variable.")
+                    logger.debug(f"Using Jira URL from environment: {jira_url}")
+                
                 base_config = JiraConfig(
-                    url=jira_url,  # 환경변수에서 가져오거나 기본값 사용
+                    url=jira_url,  # 헤더 또는 환경변수에서 가져오거나 기본값 사용
                     auth_type="api_token",  # Atlassian Cloud API Token 사용
                     ssl_verify=False,  # SSL 검증 무시
                 )
@@ -277,15 +286,31 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
         )
     # Fallback to global fetcher if not in HTTP context or no user info
     lifespan_ctx_dict_global = ctx.request_context.lifespan_context  # type: ignore
-    app_lifespan_ctx_global: MainAppContext | None = (
+    app_lifespan_ctx_global = (
         lifespan_ctx_dict_global.get("app_lifespan_context")
         if isinstance(lifespan_ctx_dict_global, dict)
         else None
     )
-    # 사용자별 토큰이 없으면 에러 발생 (전역 설정 사용하지 않음)
-    logger.error("No user-specific Jira token provided.")
+    
+    # MainAppContext 또는 JiraAppContext 둘 다 지원
+    if app_lifespan_ctx_global:
+        # full_jira_config 속성이 있는지 확인 (호환성)
+        if hasattr(app_lifespan_ctx_global, 'full_jira_config'):
+            global_config = app_lifespan_ctx_global.full_jira_config
+        elif hasattr(app_lifespan_ctx_global, 'jira_config'):
+            global_config = app_lifespan_ctx_global.jira_config
+        else:
+            global_config = None
+            
+        if global_config and hasattr(global_config, 'is_configured') and global_config.is_configured():
+            logger.info("Using global Jira configuration as fallback")
+            return JiraFetcher(global_config)
+    
+    # 여전히 설정이 없으면 에러 발생
+    logger.error("No Jira configuration available (neither user-specific nor global)")
     raise ValueError(
-        "Jira authentication required. Please provide user-specific token via Authorization header."
+        "Jira authentication required. Please provide user token via Authorization header "
+        "or configure global Jira credentials."
     )
 
 
@@ -319,16 +344,14 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
             )
             return request.state.confluence_fetcher
         user_auth_type = getattr(request.state, "user_atlassian_auth_type", None)
+        user_token = getattr(request.state, "user_atlassian_token", None)
+        
         logger.debug(f"get_confluence_fetcher: User auth type: {user_auth_type}")
-        if user_auth_type in ["oauth", "pat", "api_token"] and hasattr(
-            request.state, "user_atlassian_token"
-        ):
-            user_token = getattr(request.state, "user_atlassian_token", None)
+        logger.debug(f"get_confluence_fetcher: User token present: {user_token is not None}")
+        
+        if user_auth_type in ["oauth", "pat", "api_token"] and user_token:
             user_email = getattr(request.state, "user_atlassian_email", None)
             user_cloud_id = getattr(request.state, "user_atlassian_cloud_id", None)
-
-            if not user_token:
-                raise ValueError("User Atlassian token found in state but is empty.")
             credentials = {"user_email_context": user_email}
             if user_auth_type == "oauth":
                 credentials["oauth_access_token"] = user_token
@@ -350,9 +373,20 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
                 # 기본 설정으로 사용자별 설정 생성
                 from mcp_atlassian.confluence.config import ConfluenceConfig
                 import os
-                confluence_url = os.getenv("CONFLUENCE_URL", "https://kautotest.atlassian.net/wiki")
+                
+                # 헤더에서 Confluence URL 확인 (우선순위: 헤더 > 환경변수)
+                confluence_url_header = request.headers.get("X-Confluence-URL")
+                if confluence_url_header and confluence_url_header.strip():
+                    confluence_url = confluence_url_header.strip()
+                    logger.debug(f"Using Confluence URL from header: {confluence_url}")
+                else:
+                    confluence_url = os.getenv("CONFLUENCE_URL")
+                    if not confluence_url:
+                        raise ValueError("Confluence URL is required. Please provide it via X-Confluence-URL header or CONFLUENCE_URL environment variable.")
+                    logger.debug(f"Using Confluence URL from environment: {confluence_url}")
+                
                 base_config = ConfluenceConfig(
-                    url=confluence_url,  # 환경변수에서 가져오거나 기본값 사용
+                    url=confluence_url,  # 헤더 또는 환경변수에서 가져오거나 기본값 사용
                     auth_type="api_token",  # Atlassian Cloud API Token 사용
                     ssl_verify=False,  # SSL 검증 무시
                 )
