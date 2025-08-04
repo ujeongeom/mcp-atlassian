@@ -2,8 +2,6 @@
 
 import json
 import logging
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
 from fastmcp import Context, FastMCP
@@ -14,30 +12,14 @@ from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS
 from mcp_atlassian.models.jira.common import JiraUser
 from mcp_atlassian.servers.dependencies import get_jira_fetcher
-from mcp_atlassian.servers.context import MainAppContext
 from mcp_atlassian.utils.decorators import check_write_access
 
 logger = logging.getLogger(__name__)
 
-# 독립 실행을 위한 lifespan 컨텍스트
-@asynccontextmanager
-async def jira_lifespan(app) -> AsyncIterator[dict]:
-    """Lifespan context for standalone Jira MCP server."""
-    # 독립 실행 시에는 전역 설정이 없으므로 None으로 설정
-    context = {
-        "app_lifespan_context": MainAppContext(
-            full_jira_config=None,
-            full_confluence_config=None,
-            read_only=False,
-            enabled_tools=None
-        )
-    }
-    yield context
-
+# Jira MCP 서버 인스턴스 (lifespan은 jira_server.py에서 교체됨)
 jira_mcp = FastMCP(
     name="Jira MCP Service",
     description="Provides tools for interacting with Atlassian Jira.",
-    lifespan=jira_lifespan,
 )
 
 

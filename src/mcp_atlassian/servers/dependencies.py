@@ -16,7 +16,6 @@ from starlette.requests import Request
 from mcp_atlassian.confluence import ConfluenceConfig, ConfluenceFetcher
 from mcp_atlassian.jira import JiraConfig, JiraFetcher
 from mcp_atlassian.servers.context import MainAppContext
-from mcp_atlassian.utils.oauth import OAuthConfig
 
 if TYPE_CHECKING:
     from mcp_atlassian.confluence.config import (
@@ -37,9 +36,9 @@ def _create_user_config_for_fetcher(
 
     Args:
         base_config: The base JiraConfig or ConfluenceConfig to clone and modify.
-        auth_type: The authentication type ('oauth' or 'pat').
+        auth_type: The authentication type (only 'api_token' supported).
         credentials: Dictionary of credentials (token, email, etc).
-        cloud_id: Optional cloud ID to override the base config cloud ID.
+        cloud_id: Optional cloud ID (not used for Bearer token auth).
 
     Returns:
         JiraConfig or ConfluenceConfig with user-specific credentials.
@@ -48,9 +47,9 @@ def _create_user_config_for_fetcher(
         ValueError: If required credentials are missing or auth_type is unsupported.
         TypeError: If base_config is not a supported type.
     """
-    if auth_type not in ["oauth", "pat", "api_token"]:
+    if auth_type != "api_token":
         raise ValueError(
-            f"Unsupported auth_type '{auth_type}' for user-specific config creation. Expected 'oauth', 'pat', or 'api_token'."
+            f"Unsupported auth_type '{auth_type}' for user-specific config creation. Only 'api_token' is supported."
         )
 
     username_for_config: str | None = credentials.get("user_email_context")
@@ -61,7 +60,7 @@ def _create_user_config_for_fetcher(
 
     common_args: dict[str, Any] = {
         "url": base_config.url,
-        "auth_type": auth_type,
+        "auth_type": auth_type,  # 원래대로 그대로 전달
         "ssl_verify": base_config.ssl_verify,
         "http_proxy": base_config.http_proxy,
         "https_proxy": base_config.https_proxy,
@@ -69,75 +68,7 @@ def _create_user_config_for_fetcher(
         "socks_proxy": base_config.socks_proxy,
     }
 
-    if auth_type == "oauth":
-        user_access_token = credentials.get("oauth_access_token")
-        if not user_access_token:
-            raise ValueError(
-                "OAuth access token missing in credentials for user auth_type 'oauth'"
-            )
-        if (
-            not base_config
-            or not hasattr(base_config, "oauth_config")
-            or not getattr(base_config, "oauth_config", None)
-        ):
-            raise ValueError(
-                f"Global OAuth config for {type(base_config).__name__} is missing, "
-                "but user auth_type is 'oauth'."
-            )
-        global_oauth_cfg = base_config.oauth_config
-
-        # Use provided cloud_id or fall back to global config cloud_id
-        effective_cloud_id = cloud_id if cloud_id else global_oauth_cfg.cloud_id
-        if not effective_cloud_id:
-            raise ValueError(
-                "Cloud ID is required for OAuth authentication. "
-                "Provide it via X-Atlassian-Cloud-Id header or configure it globally."
-            )
-
-        # For minimal OAuth config (user-provided tokens), use empty strings for client credentials
-        oauth_config_for_user = OAuthConfig(
-            client_id=global_oauth_cfg.client_id if global_oauth_cfg.client_id else "",
-            client_secret=global_oauth_cfg.client_secret
-            if global_oauth_cfg.client_secret
-            else "",
-            redirect_uri=global_oauth_cfg.redirect_uri
-            if global_oauth_cfg.redirect_uri
-            else "",
-            scope=global_oauth_cfg.scope if global_oauth_cfg.scope else "",
-            access_token=user_access_token,
-            refresh_token=None,
-            expires_at=None,
-            cloud_id=effective_cloud_id,
-        )
-        common_args.update(
-            {
-                "username": username_for_config,
-                "api_token": None,
-                "personal_token": None,
-                "oauth_config": oauth_config_for_user,
-            }
-        )
-    elif auth_type == "pat":
-        user_pat = credentials.get("personal_access_token")
-        if not user_pat:
-            raise ValueError("PAT missing in credentials for user auth_type 'pat'")
-
-        # Log warning if cloud_id is provided with PAT auth (not typically needed)
-        if cloud_id:
-            logger.warning(
-                f"Cloud ID '{cloud_id}' provided with PAT authentication. "
-                "PAT authentication typically uses the base URL directly and doesn't require cloud_id override."
-            )
-
-        common_args.update(
-            {
-                "personal_token": None,  # Atlassian Cloud에서는 api_token 사용
-                "oauth_config": None,
-                "username": username_for_config,  # 사용자 이메일을 username으로 설정
-                "api_token": user_pat,  # API 토큰을 api_token 필드에 설정
-            }
-        )
-    elif auth_type == "api_token":
+    # Bearer Token (API Token) 처리
         user_api_token = credentials.get("api_token")
         if not user_api_token:
             raise ValueError("API token missing in credentials for user auth_type 'api_token'")
@@ -149,8 +80,10 @@ def _create_user_config_for_fetcher(
                 "API token authentication typically uses the base URL directly and doesn't require cloud_id override."
             )
 
+    # API token을 basic auth로 사용 (Atlassian Cloud의 username/password 방식)
         common_args.update(
             {
+            "auth_type": "basic",  # API 토큰은 basic auth로 처리
                 "personal_token": None,  # Atlassian Cloud에서는 api_token 사용
                 "oauth_config": None,
                 "username": username_for_config,  # 사용자 이메일을 username으로 설정
@@ -206,17 +139,13 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
         logger.debug(f"get_jira_fetcher: User token present: {user_token is not None}")
         
         # If OAuth or API Token is present, create user-specific fetcher
-        if user_auth_type in ["oauth", "pat", "api_token"] and user_token:
+        if user_auth_type == "api_token" and user_token:
             user_email = getattr(
                 request.state, "user_atlassian_email", None
             )  # May be None for PAT
             user_cloud_id = getattr(request.state, "user_atlassian_cloud_id", None)
             credentials = {"user_email_context": user_email}
-            if user_auth_type == "oauth":
-                credentials["oauth_access_token"] = user_token
-            elif user_auth_type == "pat":
-                credentials["personal_access_token"] = user_token
-            elif user_auth_type == "api_token":
+            if user_auth_type == "api_token":
                 credentials["api_token"] = user_token
             lifespan_ctx_dict = ctx.request_context.lifespan_context  # type: ignore
             app_lifespan_ctx: MainAppContext | None = (
@@ -246,7 +175,7 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
                 
                 base_config = JiraConfig(
                     url=jira_url,  # 헤더 또는 환경변수에서 가져오거나 기본값 사용
-                    auth_type="api_token",  # Atlassian Cloud API Token 사용
+                    auth_type="basic",  # 기본 auth_type (인증 정보는 사용자별로 처리)
                     ssl_verify=False,  # SSL 검증 무시
                 )
             else:
@@ -302,7 +231,7 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
         else:
             global_config = None
             
-        if global_config and hasattr(global_config, 'is_configured') and global_config.is_configured():
+        if global_config and hasattr(global_config, 'is_auth_configured') and global_config.is_auth_configured():
             logger.info("Using global Jira configuration as fallback")
             return JiraFetcher(global_config)
     
@@ -349,15 +278,11 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
         logger.debug(f"get_confluence_fetcher: User auth type: {user_auth_type}")
         logger.debug(f"get_confluence_fetcher: User token present: {user_token is not None}")
         
-        if user_auth_type in ["oauth", "pat", "api_token"] and user_token:
+        if user_auth_type == "api_token" and user_token:
             user_email = getattr(request.state, "user_atlassian_email", None)
             user_cloud_id = getattr(request.state, "user_atlassian_cloud_id", None)
             credentials = {"user_email_context": user_email}
-            if user_auth_type == "oauth":
-                credentials["oauth_access_token"] = user_token
-            elif user_auth_type == "pat":
-                credentials["personal_access_token"] = user_token
-            elif user_auth_type == "api_token":
+            if user_auth_type == "api_token":
                 credentials["api_token"] = user_token
             lifespan_ctx_dict = ctx.request_context.lifespan_context  # type: ignore
             app_lifespan_ctx: MainAppContext | None = (
@@ -387,7 +312,7 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
                 
                 base_config = ConfluenceConfig(
                     url=confluence_url,  # 헤더 또는 환경변수에서 가져오거나 기본값 사용
-                    auth_type="api_token",  # Atlassian Cloud API Token 사용
+                    auth_type="basic",  # 기본 auth_type (인증 정보는 사용자별로 처리)
                     ssl_verify=False,  # SSL 검증 무시
                 )
             else:
@@ -444,13 +369,29 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
             "Not in an HTTP request context. Attempting global ConfluenceFetcher for non-HTTP."
         )
     lifespan_ctx_dict_global = ctx.request_context.lifespan_context  # type: ignore
-    app_lifespan_ctx_global: MainAppContext | None = (
+    app_lifespan_ctx_global = (
         lifespan_ctx_dict_global.get("app_lifespan_context")
         if isinstance(lifespan_ctx_dict_global, dict)
         else None
     )
-    # 사용자별 토큰이 없으면 에러 발생 (전역 설정 사용하지 않음)
-    logger.error("No user-specific Confluence token provided.")
+    
+    # MainAppContext 또는 ConfluenceAppContext 둘 다 지원
+    if app_lifespan_ctx_global:
+        # full_confluence_config 속성이 있는지 확인 (호환성)
+        if hasattr(app_lifespan_ctx_global, 'full_confluence_config'):
+            global_config = app_lifespan_ctx_global.full_confluence_config
+        elif hasattr(app_lifespan_ctx_global, 'confluence_config'):
+            global_config = app_lifespan_ctx_global.confluence_config
+        else:
+            global_config = None
+            
+        if global_config and hasattr(global_config, 'is_auth_configured') and global_config.is_auth_configured():
+            logger.info("Using global Confluence configuration as fallback")
+            return ConfluenceFetcher(global_config)
+    
+    # 여전히 설정이 없으면 에러 발생
+    logger.error("No Confluence configuration available (neither user-specific nor global)")
     raise ValueError(
-        "Confluence authentication required. Please provide user-specific token via Authorization header."
+        "Confluence authentication required. Please provide user token via Authorization header "
+        "or configure global Confluence credentials."
     )

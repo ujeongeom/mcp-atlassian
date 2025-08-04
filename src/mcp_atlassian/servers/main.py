@@ -56,8 +56,8 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
             from mcp_atlassian.jira.config import JiraConfig
             jira_config = JiraConfig(
                 url=jira_url,
-                auth_type="api_token",  # Atlassian Cloud API Token 사용
-                ssl_verify=False,  # SSL 검증 무시
+                auth_type="basic",  # 기본 auth_type
+                ssl_verify=False,
             )
             loaded_jira_config = jira_config
             logger.info(
@@ -72,8 +72,8 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
             from mcp_atlassian.confluence.config import ConfluenceConfig
             confluence_config = ConfluenceConfig(
                 url=confluence_url,
-                auth_type="api_token",  # Atlassian Cloud API Token 사용
-                ssl_verify=False,  # SSL 검증 무시
+                auth_type="basic",  # 기본 auth_type
+                ssl_verify=False,
             )
             loaded_confluence_config = confluence_config
             logger.info(
@@ -169,7 +169,7 @@ class AtlassianMCP(FastMCP[MainAppContext]):
                     if jira_url:
                         jira_config = JiraConfig(
                             url=jira_url,
-                            auth_type="api_token",  # Atlassian Cloud API Token 사용
+                            auth_type="basic",  # Atlassian Cloud API Token은 basic auth로 처리
                             ssl_verify=False,
                             api_token=token,  # api_token 필드 사용
                             username=user_email
@@ -185,19 +185,20 @@ class AtlassianMCP(FastMCP[MainAppContext]):
                 try:
                     from mcp_atlassian.confluence.config import ConfluenceConfig
                     from mcp_atlassian.confluence import ConfluenceFetcher
+                    import os
                     
                     confluence_url = os.getenv("CONFLUENCE_URL")
                     if confluence_url:
                         confluence_config = ConfluenceConfig(
                             url=confluence_url,
-                            auth_type="api_token",  # Atlassian Cloud API Token 사용
+                            auth_type="basic",  # Atlassian Cloud API Token은 basic auth로 처리
                             ssl_verify=False,
                             api_token=token,  # api_token 필드 사용
                             username=user_email
                         )
                         confluence_fetcher = ConfluenceFetcher(config=confluence_config)
-                        current_user_info = confluence_fetcher.get_current_user_info()
-                        logger.info(f"Confluence authentication successful for user: {current_user_info.get('displayName', 'unknown')}")
+                        current_user = confluence_fetcher.get_current_user_info()
+                        logger.info(f"Confluence authentication successful for user: {current_user}")
                 except Exception as e:
                     logger.error(f"Confluence authentication failed: {e}")
                     return []
@@ -342,30 +343,12 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                     f"UserTokenMiddleware.dispatch: Bearer token extracted (masked): ...{mask_sensitive(token, 8)}"
                 )
                 request.state.user_atlassian_token = token
-                request.state.user_atlassian_auth_type = "api_token"  # Bearer 토큰을 api_token 타입으로 처리
+                request.state.user_atlassian_auth_type = "api_token"  # Bearer 토큰을 api_token 타입으로 처리 (후에 basic auth로 변환됨)
                 request.state.user_atlassian_email = user_email_header.strip() if user_email_header else None # Set email from header
                 logger.debug(
                     f"UserTokenMiddleware.dispatch: Set request.state (pre-validation): "
                     f"auth_type='{getattr(request.state, 'user_atlassian_auth_type', 'N/A')}', "
                     f"token_present={bool(getattr(request.state, 'user_atlassian_token', None))}"
-                )
-            elif auth_header and auth_header.startswith("Token "):
-                token = auth_header.split(" ", 1)[1].strip()
-                if not token:
-                    return JSONResponse(
-                        {"error": "Unauthorized: Empty Token (PAT)"},
-                        status_code=401,
-                    )
-                logger.debug(
-                    f"UserTokenMiddleware.dispatch: PAT (Token scheme) extracted (masked): ...{mask_sensitive(token, 8)}"
-                )
-                request.state.user_atlassian_token = token
-                request.state.user_atlassian_auth_type = "pat"
-                request.state.user_atlassian_email = (
-                    None  # PATs don't carry email in the token itself
-                )
-                logger.debug(
-                    "UserTokenMiddleware.dispatch: Set request.state for PAT auth."
                 )
             elif auth_header:
                 logger.warning(
@@ -373,7 +356,7 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                 )
                 return JSONResponse(
                     {
-                        "error": "Unauthorized: Only 'Bearer <OAuthToken>' or 'Token <PAT>' types are supported."
+                        "error": "Unauthorized: Only 'Bearer <token>' is supported."
                     },
                     status_code=401,
                 )

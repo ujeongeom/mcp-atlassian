@@ -36,6 +36,9 @@ RUN find /app/.venv -name '__pycache__' -type d -exec rm -rf {} + && \
 # Final stage
 FROM python:3.10-alpine
 
+# Install wget for health check
+RUN apk add --no-cache wget
+
 # Create a non-root user 'app'
 RUN adduser -D -h /home/app -s /bin/sh app
 WORKDIR /app
@@ -48,10 +51,10 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 # Jira 전용 서버 실행
 # 환경변수 설정:
-# - JIRA_URL: Jira 인스턴스 URL (필수)
 # - TRANSPORT: streamable-http (기본값)
 # - PORT: 9000 (기본값)
 # - MCP_LOGGING_STDOUT: true (기본값)
+# - X-Jira-URL: 헤더를 통해 동적으로 전달
 
 # 기본 환경변수 설정
 ENV TRANSPORT=streamable-http
@@ -64,8 +67,8 @@ ENV MCP_LOGGING_STDOUT=true
 
 EXPOSE 9000
 
-# Health check 추가
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:9000/health || exit 1
+# Health check 수정 (wget 사용)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:9000/mcp || exit 1
 
 ENTRYPOINT ["mcp-atlassian-jira"] 

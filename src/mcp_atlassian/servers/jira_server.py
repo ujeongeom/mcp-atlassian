@@ -11,27 +11,13 @@ from mcp_atlassian.jira.config import JiraConfig
 from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.utils.tools import get_enabled_tools
 from mcp_atlassian.utils.io import is_read_only_mode
+from mcp_atlassian.servers.context import JiraAppContext
 from fastmcp import FastMCP
 
 logger = logging.getLogger("mcp-atlassian.jira-server")
 
-# Jira 전용 컨텍스트 클래스
-class JiraAppContext:
-    def __init__(
-        self,
-        jira_config: JiraConfig | None = None,
-        jira_fetcher: JiraFetcher | None = None,
-        read_only: bool = False,
-        enabled_tools: list[str] | None = None,
-    ):
-        self.jira_config = jira_config
-        self.full_jira_config = jira_config  # dependencies.py에서 기대하는 속성명
-        self.jira_fetcher = jira_fetcher
-        self.read_only = read_only
-        self.enabled_tools = enabled_tools or []
-
 @asynccontextmanager
-async def jira_lifespan(app) -> AsyncIterator[dict]:
+async def jira_standalone_lifespan(app) -> AsyncIterator[dict]:
     """Jira 전용 lifespan 컨텍스트"""
     logger.info("Jira-only MCP server lifespan starting...")
     
@@ -45,7 +31,7 @@ async def jira_lifespan(app) -> AsyncIterator[dict]:
     try:
         # 기본 설정이 있다면 로드 (없어도 괜찮음)
         jira_config = JiraConfig.from_env()
-        if jira_config and jira_config.is_configured():
+        if jira_config and jira_config.is_auth_configured():
             try:
                 jira_fetcher = JiraFetcher(jira_config)
                 logger.info("Global Jira client initialized successfully")
@@ -110,6 +96,27 @@ def main() -> None:
 
     # jira_mcp import
     from .jira import jira_mcp
+    from .main import UserTokenMiddleware
+    from starlette.middleware import Middleware
+
+    # Jira 전용 서버를 위해 lifespan 교체
+    jira_mcp.lifespan = jira_standalone_lifespan
+
+    # jira_mcp의 http_app 메서드를 교체하여 UserTokenMiddleware 추가
+    original_http_app = jira_mcp.http_app
+    def patched_http_app(path=None, middleware=None, transport="streamable-http"):
+        """UserTokenMiddleware가 포함된 HTTP 앱을 생성합니다."""
+        try:
+            user_token_mw = Middleware(UserTokenMiddleware, mcp_server_ref=jira_mcp)
+            final_middleware = [user_token_mw]
+            if middleware:
+                final_middleware.extend(middleware)
+            return original_http_app(path=path, middleware=final_middleware, transport=transport)
+        except Exception as e:
+            logger.error(f"Failed to create HTTP app with middleware: {e}", exc_info=True)
+            raise
+
+    jira_mcp.http_app = patched_http_app
 
     run_kwargs = {
         "transport": transport,
