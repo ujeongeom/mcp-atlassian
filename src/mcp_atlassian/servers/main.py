@@ -279,7 +279,6 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
         # MCP 경로에 대한 모든 요청 처리 (GET과 POST 모두)
         if request_path == mcp_path:
             auth_header = request.headers.get("Authorization")
-            cloud_id_header = request.headers.get("X-Atlassian-Cloud-Id")
             user_email_header = request.headers.get("X-User-Email")
 
             token_for_log = mask_sensitive(
@@ -288,7 +287,7 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                 else auth_header
             )
             logger.debug(
-                f"UserTokenMiddleware: Path='{request.url.path}', Method='{request.method}', AuthHeader='{mask_sensitive(auth_header)}', ParsedToken(masked)='{token_for_log}', CloudId='{cloud_id_header}', UserEmail='{user_email_header}'"
+                f"UserTokenMiddleware: Path='{request.url.path}', Method='{request.method}', AuthHeader='{mask_sensitive(auth_header)}', ParsedToken(masked)='{token_for_log}', UserEmail='{user_email_header}'"
             )
 
             # Extract and save user email if provided
@@ -301,18 +300,6 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                 request.state.user_atlassian_email = None
                 logger.debug(
                     "UserTokenMiddleware: No user email header provided"
-                )
-
-            # Extract and save cloudId if provided
-            if cloud_id_header and cloud_id_header.strip():
-                request.state.user_atlassian_cloud_id = cloud_id_header.strip()
-                logger.debug(
-                    f"UserTokenMiddleware: Extracted cloudId from header: {cloud_id_header.strip()}"
-                )
-            else:
-                request.state.user_atlassian_cloud_id = None
-                logger.debug(
-                    "UserTokenMiddleware: No cloudId header provided, will use global config"
                 )
 
             # Check for mcp-session-id header for debugging
