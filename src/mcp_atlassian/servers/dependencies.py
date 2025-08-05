@@ -69,27 +69,27 @@ def _create_user_config_for_fetcher(
     }
 
     # Bearer Token (API Token) 처리
-        user_api_token = credentials.get("api_token")
-        if not user_api_token:
-            raise ValueError("API token missing in credentials for user auth_type 'api_token'")
+    user_api_token = credentials.get("api_token")
+    if not user_api_token:
+        raise ValueError("API token missing in credentials for user auth_type 'api_token'")
 
-        # Log warning if cloud_id is provided with API token auth (not typically needed)
-        if cloud_id:
-            logger.warning(
-                f"Cloud ID '{cloud_id}' provided with API token authentication. "
-                "API token authentication typically uses the base URL directly and doesn't require cloud_id override."
-            )
+    # Log warning if cloud_id is provided with API token auth (not typically needed)
+    if cloud_id:
+        logger.warning(
+            f"Cloud ID '{cloud_id}' provided with API token authentication. "
+            "API token authentication typically uses the base URL directly and doesn't require cloud_id override."
+        )
 
     # API token을 basic auth로 사용 (Atlassian Cloud의 username/password 방식)
-        common_args.update(
-            {
+    common_args.update(
+        {
             "auth_type": "basic",  # API 토큰은 basic auth로 처리
-                "personal_token": None,  # Atlassian Cloud에서는 api_token 사용
-                "oauth_config": None,
-                "username": username_for_config,  # 사용자 이메일을 username으로 설정
-                "api_token": user_api_token,  # API 토큰을 api_token 필드에 설정
-            }
-        )
+            "personal_token": None,  # Atlassian Cloud에서는 api_token 사용
+            "oauth_config": None,
+            "username": username_for_config,  # 사용자 이메일을 username으로 설정
+            "api_token": user_api_token,  # API 토큰을 api_token 필드에 설정
+        }
+    )
 
     if isinstance(base_config, JiraConfig):
         user_jira_config: UserJiraConfigType = dataclasses.replace(

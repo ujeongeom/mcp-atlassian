@@ -1,18 +1,15 @@
-import asyncio
+"""Jira-only MCP server entry point for Container Apps deployment."""
+
 import logging
 import os
-import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from mcp_atlassian.utils.logging import setup_logging
-from mcp_atlassian.utils.env import is_env_truthy
-from mcp_atlassian.jira.config import JiraConfig
 from mcp_atlassian.jira import JiraFetcher
-from mcp_atlassian.utils.tools import get_enabled_tools
-from mcp_atlassian.utils.io import is_read_only_mode
+from mcp_atlassian.jira.config import JiraConfig
 from mcp_atlassian.servers.context import JiraAppContext
-from fastmcp import FastMCP
+from mcp_atlassian.utils.io import is_read_only_mode
+from mcp_atlassian.utils.tools import get_enabled_tools
 
 logger = logging.getLogger("mcp-atlassian.jira-server")
 
@@ -67,25 +64,16 @@ async def jira_standalone_lifespan(app) -> AsyncIterator[dict]:
 
 
 def main() -> None:
-    current_logging_level = logging.INFO
-    if is_env_truthy("MCP_VERY_VERBOSE", "false"):
-        current_logging_level = logging.DEBUG
-    elif is_env_truthy("MCP_VERBOSE", "false"):
-        current_logging_level = logging.INFO
-
-    # STDOUT으로 로깅 설정 (Container Apps 환경에 최적화)
-    logging_stream = sys.stdout if is_env_truthy("MCP_LOGGING_STDOUT") else sys.stderr
-    setup_logging(current_logging_level, logging_stream)
+    """Jira-only MCP server entry point for Container Apps deployment."""
+    from .common import setup_server_logging, get_server_config, add_user_token_middleware, run_mcp_server
     
+    # 공통 로깅 설정
+    current_logging_level = setup_server_logging()
     logger.info("Starting Jira-only MCP server for Container Apps deployment")
 
-    # 환경 변수에서 설정 읽기
-    transport = os.getenv("TRANSPORT", "streamable-http").lower()
-    port = int(os.getenv("PORT", "9000"))
-    host = os.getenv("HOST", "0.0.0.0")  # noqa: S104
-    path = os.getenv("STREAMABLE_HTTP_PATH", "/mcp")
-
-    logger.info(f"Server config: {transport} on {host}:{port}{path}")
+    # 공통 서버 설정 읽기
+    server_config = get_server_config()
+    logger.info(f"Server config: {server_config['transport']} on {server_config['host']}:{server_config['port']}{server_config['path']}")
     
     # 인증 방식 로깅
     jira_url = os.getenv("JIRA_URL")
@@ -96,44 +84,15 @@ def main() -> None:
 
     # jira_mcp import
     from .jira import jira_mcp
-    from .main import UserTokenMiddleware
-    from starlette.middleware import Middleware
 
-    # Jira 전용 서버를 위해 lifespan 교체
+    # Jira 전용 서버를 위해 lifespan 설정
     jira_mcp.lifespan = jira_standalone_lifespan
 
-    # jira_mcp의 http_app 메서드를 교체하여 UserTokenMiddleware 추가
-    original_http_app = jira_mcp.http_app
-    def patched_http_app(path=None, middleware=None, transport="streamable-http"):
-        """UserTokenMiddleware가 포함된 HTTP 앱을 생성합니다."""
-        try:
-            user_token_mw = Middleware(UserTokenMiddleware, mcp_server_ref=jira_mcp)
-            final_middleware = [user_token_mw]
-            if middleware:
-                final_middleware.extend(middleware)
-            return original_http_app(path=path, middleware=final_middleware, transport=transport)
-        except Exception as e:
-            logger.error(f"Failed to create HTTP app with middleware: {e}", exc_info=True)
-            raise
+    # 공통 middleware 추가 함수 사용
+    add_user_token_middleware(jira_mcp, "Jira-only")
 
-    jira_mcp.http_app = patched_http_app
-
-    run_kwargs = {
-        "transport": transport,
-        "host": host,
-        "port": port,
-        "log_level": logging.getLevelName(current_logging_level).lower(),
-        "path": path,
-    }
-
-    try:
-        logger.debug("Starting Jira-only server asyncio event loop...")
-        asyncio.run(jira_mcp.run_async(**run_kwargs))
-    except (KeyboardInterrupt, SystemExit) as e:
-        logger.info(f"Jira-only server shutdown initiated: {type(e).__name__}")
-    except Exception as e:
-        logger.error(f"Jira-only server encountered an error: {e}", exc_info=True)
-        sys.exit(1)
+    # 공통 서버 실행 함수 사용
+    run_mcp_server(jira_mcp, server_config, current_logging_level, "Jira-only")
 
 if __name__ == "__main__":
     main() 

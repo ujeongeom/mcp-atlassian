@@ -1,5 +1,3 @@
-"""Main FastMCP server setup for Atlassian integration."""
-
 import logging
 import os
 from collections.abc import AsyncIterator
@@ -8,20 +6,19 @@ from typing import Any, Literal, Optional
 
 from cachetools import TTLCache
 from fastmcp import FastMCP
-from fastmcp.tools import Tool as FastMCPTool
 from fastmcp.server.dependencies import get_http_request
+from fastmcp.tools import Tool as FastMCPTool
 from mcp.types import Tool as MCPTool
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 
 from mcp_atlassian.confluence import ConfluenceFetcher
 from mcp_atlassian.confluence.config import ConfluenceConfig
 from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.jira.config import JiraConfig
-from mcp_atlassian.utils.environment import get_available_services
 from mcp_atlassian.utils.io import is_read_only_mode
 from mcp_atlassian.utils.logging import mask_sensitive
 from mcp_atlassian.utils.tools import get_enabled_tools, should_include_tool
@@ -53,7 +50,6 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
     if jira_url:
         try:
             # URL만으로 기본 설정 생성 (인증은 나중에 사용자별로 처리)
-            from mcp_atlassian.jira.config import JiraConfig
             jira_config = JiraConfig(
                 url=jira_url,
                 auth_type="basic",  # 기본 auth_type
@@ -69,7 +65,6 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
     if confluence_url:
         try:
             # URL만으로 기본 설정 생성 (인증은 나중에 사용자별로 처리)
-            from mcp_atlassian.confluence.config import ConfluenceConfig
             confluence_config = ConfluenceConfig(
                 url=confluence_url,
                 auth_type="basic",  # 기본 auth_type
@@ -161,10 +156,6 @@ class AtlassianMCP(FastMCP[MainAppContext]):
                 
                 # Jira 인증 검증
                 try:
-                    from mcp_atlassian.jira.config import JiraConfig
-                    from mcp_atlassian.jira import JiraFetcher
-                    import os
-                    
                     jira_url = os.getenv("JIRA_URL")
                     if jira_url:
                         jira_config = JiraConfig(
@@ -183,10 +174,6 @@ class AtlassianMCP(FastMCP[MainAppContext]):
                 
                 # Confluence 인증 검증
                 try:
-                    from mcp_atlassian.confluence.config import ConfluenceConfig
-                    from mcp_atlassian.confluence import ConfluenceFetcher
-                    import os
-                    
                     confluence_url = os.getenv("CONFLUENCE_URL")
                     if confluence_url:
                         confluence_config = ConfluenceConfig(
@@ -272,7 +259,7 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
-    ) -> JSONResponse:
+    ) -> Response:
         logger.debug(
             f"UserTokenMiddleware.dispatch: ENTERED for request path='{request.url.path}', method='{request.method}'"
         )
@@ -288,7 +275,9 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
         logger.debug(
             f"UserTokenMiddleware.dispatch: Comparing request_path='{request_path}' with mcp_path='{mcp_path}'. Request method='{request.method}'"
         )
-        if request_path == mcp_path and request.method == "POST":
+        
+        # MCP 경로에 대한 모든 요청 처리 (GET과 POST 모두)
+        if request_path == mcp_path:
             auth_header = request.headers.get("Authorization")
             cloud_id_header = request.headers.get("X-Atlassian-Cloud-Id")
             user_email_header = request.headers.get("X-User-Email")
@@ -299,7 +288,7 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                 else auth_header
             )
             logger.debug(
-                f"UserTokenMiddleware: Path='{request.url.path}', AuthHeader='{mask_sensitive(auth_header)}', ParsedToken(masked)='{token_for_log}', CloudId='{cloud_id_header}', UserEmail='{user_email_header}'"
+                f"UserTokenMiddleware: Path='{request.url.path}', Method='{request.method}', AuthHeader='{mask_sensitive(auth_header)}', ParsedToken(masked)='{token_for_log}', CloudId='{cloud_id_header}', UserEmail='{user_email_header}'"
             )
 
             # Extract and save user email if provided
@@ -332,9 +321,11 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                 logger.debug(
                     f"UserTokenMiddleware: MCP-Session-ID header found: {mcp_session_id}"
                 )
+                
             if auth_header and auth_header.startswith("Bearer "):
                 token = auth_header.split(" ", 1)[1].strip()
                 if not token:
+                    logger.warning(f"Empty Bearer token received for {request.method} {request.url.path}")
                     return JSONResponse(
                         {"error": "Unauthorized: Empty Bearer token"},
                         status_code=401,
@@ -352,7 +343,7 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                 )
             elif auth_header:
                 logger.warning(
-                    f"Unsupported Authorization type for {request.url.path}: {auth_header.split(' ', 1)[0] if ' ' in auth_header else 'UnknownType'}"
+                    f"Unsupported Authorization type for {request.method} {request.url.path}: {auth_header.split(' ', 1)[0] if ' ' in auth_header else 'UnknownType'}"
                 )
                 return JSONResponse(
                     {
@@ -362,13 +353,21 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                 )
             else:
                 logger.debug(
-                    f"No Authorization header provided for {request.url.path}. Will proceed with global/fallback server configuration if applicable."
+                    f"No Authorization header provided for {request.method} {request.url.path}. Will proceed with global/fallback server configuration if applicable."
                 )
-        response = await call_next(request)
-        logger.debug(
-            f"UserTokenMiddleware.dispatch: EXITED for request path='{request.url.path}'"
-        )
-        return response
+        
+        try:
+            response = await call_next(request)
+            logger.debug(
+                f"UserTokenMiddleware.dispatch: EXITED for request path='{request.url.path}' with status={getattr(response, 'status_code', 'unknown')}"
+            )
+            return response
+        except Exception as e:
+            logger.error(f"UserTokenMiddleware: Error processing request {request.method} {request.url.path}: {e}", exc_info=True)
+            return JSONResponse(
+                {"error": "Internal server error"},
+                status_code=500,
+            )
 
 
 main_mcp = AtlassianMCP(name="Atlassian MCP", lifespan=main_lifespan)

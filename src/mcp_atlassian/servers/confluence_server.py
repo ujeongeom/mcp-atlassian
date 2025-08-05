@@ -1,21 +1,16 @@
 """Confluence-only MCP server entry point for Container Apps deployment."""
 
-import asyncio
 import logging
 import os
-import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from mcp_atlassian.utils.logging import setup_logging
-from mcp_atlassian.utils.env import is_env_truthy
-from mcp_atlassian.utils.tools import get_enabled_tools
-from mcp_atlassian.utils.io import is_read_only_mode
-from mcp_atlassian.confluence.config import ConfluenceConfig
 from mcp_atlassian.confluence import ConfluenceFetcher
+from mcp_atlassian.confluence.config import ConfluenceConfig
 from mcp_atlassian.servers.context import ConfluenceAppContext
+from mcp_atlassian.utils.io import is_read_only_mode
+from mcp_atlassian.utils.tools import get_enabled_tools
 
-# Confluence MCP 인스턴스 import
 from .confluence import confluence_mcp
 
 logger = logging.getLogger("mcp-atlassian.confluence-server")
@@ -72,26 +67,15 @@ async def confluence_standalone_lifespan(app) -> AsyncIterator[dict]:
 
 def main() -> None:
     """Confluence-only MCP server entry point for Container Apps deployment."""
-    # 로깅 설정 - INFO로 기본 설정
-    current_logging_level = logging.INFO
-    if is_env_truthy("MCP_VERY_VERBOSE", "false"):
-        current_logging_level = logging.DEBUG
-    elif is_env_truthy("MCP_VERBOSE", "false"):
-        current_logging_level = logging.INFO
-
-    # STDOUT으로 로깅 설정 (Container Apps 환경에 최적화)
-    logging_stream = sys.stdout if is_env_truthy("MCP_LOGGING_STDOUT") else sys.stderr
-    setup_logging(current_logging_level, logging_stream)
+    from .common import setup_server_logging, get_server_config, add_user_token_middleware, run_mcp_server
     
+    # 공통 로깅 설정
+    current_logging_level = setup_server_logging()
     logger.info("Starting Confluence-only MCP server for Container Apps deployment")
 
-    # 환경 변수에서 설정 읽기
-    transport = os.getenv("TRANSPORT", "streamable-http").lower()
-    port = int(os.getenv("PORT", "9000"))
-    host = os.getenv("HOST", "0.0.0.0")  # noqa: S104
-    path = os.getenv("STREAMABLE_HTTP_PATH", "/mcp")
-
-    logger.info(f"Confluence-only server configuration: transport={transport}, host:port-path={host}:{port}{path}")
+    # 공통 서버 설정 읽기
+    server_config = get_server_config()
+    logger.info(f"Confluence-only server configuration: transport={server_config['transport']}, host:port-path={server_config['host']}:{server_config['port']}{server_config['path']}")
 
     # Confluence URL은 이제 헤더에서 동적으로 받음 (환경변수 체크 제거)
     logger.info("Confluence URL will be read from X-Confluence-URL header dynamically")
@@ -99,42 +83,11 @@ def main() -> None:
     # Confluence 전용 서버를 위해 lifespan 설정
     confluence_mcp.lifespan = confluence_standalone_lifespan
 
-    # confluence_mcp의 http_app 메서드를 교체하여 UserTokenMiddleware 추가
-    from .main import UserTokenMiddleware
-    from starlette.middleware import Middleware
+    # 공통 middleware 추가 함수 사용
+    add_user_token_middleware(confluence_mcp, "Confluence-only")
 
-    original_http_app = confluence_mcp.http_app
-    def patched_http_app(path=None, middleware=None, transport="streamable-http"):
-        """UserTokenMiddleware가 포함된 HTTP 앱을 생성합니다."""
-        try:
-            user_token_mw = Middleware(UserTokenMiddleware, mcp_server_ref=confluence_mcp)
-            final_middleware = [user_token_mw]
-            if middleware:
-                final_middleware.extend(middleware)
-            return original_http_app(path=path, middleware=final_middleware, transport=transport)
-        except Exception as e:
-            logger.error(f"Failed to create HTTP app with middleware: {e}", exc_info=True)
-            raise
-
-    confluence_mcp.http_app = patched_http_app
-
-    # 실행 설정
-    run_kwargs = {
-        "transport": transport,
-        "host": host,
-        "port": port,
-        "log_level": logging.getLevelName(current_logging_level).lower(),
-        "path": path,
-    }
-
-    try:
-        logger.debug("Starting Confluence-only server asyncio event loop...")
-        asyncio.run(confluence_mcp.run_async(**run_kwargs))
-    except (KeyboardInterrupt, SystemExit) as e:
-        logger.info(f"Confluence-only server shutdown initiated: {type(e).__name__}")
-    except Exception as e:
-        logger.error(f"Confluence-only server encountered an error: {e}", exc_info=True)
-        sys.exit(1)
+    # 공통 서버 실행 함수 사용
+    run_mcp_server(confluence_mcp, server_config, current_logging_level, "Confluence-only")
 
 
 if __name__ == "__main__":
