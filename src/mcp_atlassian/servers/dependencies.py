@@ -143,6 +143,7 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
             user_email = getattr(
                 request.state, "user_atlassian_email", None
             )  # May be None for PAT
+            user_cloud_id = getattr(request.state, "user_atlassian_cloud_id", None)
             credentials = {"user_email_context": user_email}
             if user_auth_type == "api_token":
                 credentials["api_token"] = user_token
@@ -279,6 +280,7 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
         
         if user_auth_type == "api_token" and user_token:
             user_email = getattr(request.state, "user_atlassian_email", None)
+            user_cloud_id = getattr(request.state, "user_atlassian_cloud_id", None)
             credentials = {"user_email_context": user_email}
             if user_auth_type == "api_token":
                 credentials["api_token"] = user_token
