@@ -11,7 +11,9 @@ from mcp_atlassian.servers.context import JiraAppContext
 from mcp_atlassian.utils.io import is_read_only_mode
 from mcp_atlassian.utils.tools import get_enabled_tools
 
-logger = logging.getLogger("mcp-atlassian.jira-server")
+from mcp_atlassian.utils.logging import get_logger
+
+logger = get_logger("jira")
 
 @asynccontextmanager
 async def jira_standalone_lifespan(app) -> AsyncIterator[dict]:

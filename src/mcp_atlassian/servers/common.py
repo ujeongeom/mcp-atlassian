@@ -19,11 +19,9 @@ logger = logging.getLogger("mcp-atlassian.server.common")
 
 def setup_server_logging() -> int:
     """공통 로깅 설정 함수."""
-    current_logging_level = logging.INFO
-    if is_env_truthy("MCP_VERY_VERBOSE", "false"):
-        current_logging_level = logging.DEBUG
-    elif is_env_truthy("MCP_VERBOSE", "false"):
-        current_logging_level = logging.INFO
+    current_logging_level = logging.INFO  # 기본값을 INFO로 변경
+    if is_env_truthy("MCP_VERBOSE", "false"):
+        current_logging_level = logging.DEBUG  # DEBUG는 MCP_VERBOSE로만 활성화
 
     # STDOUT으로 로깅 설정 (Container Apps 환경에 최적화)
     logging_stream = sys.stdout if is_env_truthy("MCP_LOGGING_STDOUT") else sys.stderr
@@ -33,12 +31,13 @@ def setup_server_logging() -> int:
 
 
 def get_server_config() -> dict[str, Any]:
-    """환경변수에서 서버 설정을 읽어오는 공통 함수."""
+    """환경변수에서 서버 설정을 읽어오는 공통 함수."""    
     return {
         "transport": os.getenv("TRANSPORT", "streamable-http").lower(),
         "port": int(os.getenv("PORT", "9000")),
         "host": os.getenv("HOST", "0.0.0.0"),  # noqa: S104
         "path": os.getenv("STREAMABLE_HTTP_PATH", "/mcp"),
+        "stateless_http": True,  # FastMCP stateless 모드로 고정
     }
 
 
@@ -68,7 +67,12 @@ def run_mcp_server(
     logging_level: int,
     service_name: str,
 ) -> None:
-    """MCP 서버를 실행하는 공통 함수."""
+    """MCP 서버를 실행하는 공통 함수."""    
+    # stateless_http 설정을 FastMCP 인스턴스에 적용 (run_async 호출 전에 설정 필요)
+    if "stateless_http" in server_config:
+        mcp_instance.settings.stateless_http = server_config["stateless_http"]
+        logger.info(f"Set stateless_http to {server_config['stateless_http']} for {service_name} server")
+    
     run_kwargs = {
         "transport": server_config["transport"],
         "host": server_config["host"],

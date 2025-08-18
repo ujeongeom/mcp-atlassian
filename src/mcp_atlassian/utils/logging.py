@@ -9,6 +9,7 @@ import logging
 import sys
 from typing import TextIO
 
+from .env import is_env_truthy
 
 def setup_logging(
     level: int = logging.WARNING, stream: TextIO = sys.stderr
@@ -37,35 +38,69 @@ def setup_logging(
     handler.setFormatter(formatter)
     root_logger.addHandler(handler)
 
-    # Configure specific loggers
-    loggers = ["mcp-atlassian", "mcp.server", "mcp.server.lowlevel.server", "mcp-jira"]
+    # Configure specific loggers with unified naming
+    loggers = [
+        "mcp-atlassian",           # Main application logger
+        "mcp-atlassian.jira",      # JIRA specific logger
+        "mcp-atlassian.confluence", # Confluence specific logger
+        "mcp-atlassian.server",    # Server related logger
+        "mcp.server",              # MCP protocol logger
+        "mcp.server.lowlevel.server"
+    ]
 
     for logger_name in loggers:
         logger = logging.getLogger(logger_name)
         logger.setLevel(level)
 
+    # HTTP 로깅 활성화 (환경 변수로 제어)
+    if is_env_truthy("MCP_HTTP_DEBUG", "false"):
+        # urllib3와 requests HTTP 로깅 활성화
+        for logger_name in ["urllib3", "urllib3.connectionpool", "requests", "requests.packages.urllib3"]:
+            logging.getLogger(logger_name).setLevel(logging.DEBUG)
+        logging.getLogger("mcp-atlassian").info("HTTP request/response logging enabled")
+
     # Return the application logger
     return logging.getLogger("mcp-atlassian")
 
 
-def mask_sensitive(value: str | None, keep_chars: int = 4) -> str:
-    """Masks sensitive strings for logging.
+def get_logger(service: str = "main") -> logging.Logger:
+    """
+    Get a logger with consistent naming for Container Apps deployment.
+    
+    Args:
+        service: Service name ('jira', 'confluence', 'main')
+        
+    Returns:
+        Configured logger instance
+    """
+    if service == "jira":
+        return logging.getLogger("mcp-atlassian.jira")
+    elif service == "confluence":
+        return logging.getLogger("mcp-atlassian.confluence")
+    else:
+        return logging.getLogger("mcp-atlassian")
+
+
+
+
+
+def mask_sensitive(value: str, visible_chars: int = 4) -> str:
+    """Mask sensitive values for safe logging.
 
     Args:
-        value: The string to mask
-        keep_chars: Number of characters to keep visible at start and end
+        value: The value to mask
+        visible_chars: Number of characters to show at start and end
 
     Returns:
-        Masked string with most characters replaced by asterisks
+        Masked value
     """
     if not value:
-        return "Not Provided"
-    if len(value) <= keep_chars * 2:
-        return "*" * len(value)
-    start = value[:keep_chars]
-    end = value[-keep_chars:]
-    middle = "*" * (len(value) - keep_chars * 2)
-    return f"{start}{middle}{end}"
+        return "***"
+    
+    if len(value) <= visible_chars * 2:
+        return "***"
+    
+    return f"{value[:visible_chars]}***{value[-visible_chars:]}"
 
 
 def get_masked_session_headers(headers: dict[str, str]) -> dict[str, str]:
@@ -98,21 +133,18 @@ def get_masked_session_headers(headers: dict[str, str]) -> dict[str, str]:
     return masked_headers
 
 
-def log_config_param(
-    logger: logging.Logger,
-    service: str,
-    param: str,
-    value: str | None,
-    sensitive: bool = False,
-) -> None:
-    """Logs a configuration parameter, masking if sensitive.
+def log_config_param(param_name: str, value: str | None, mask: bool = True) -> None:
+    """Log configuration parameter with optional masking.
 
     Args:
-        logger: The logger to use
-        service: The service name (Jira or Confluence)
-        param: The parameter name
-        value: The parameter value
-        sensitive: Whether the value should be masked
+        param_name: Parameter name
+        value: Parameter value
+        mask: Whether to mask the value
     """
-    display_value = mask_sensitive(value) if sensitive else (value or "Not Provided")
-    logger.info(f"{service} {param}: {display_value}")
+    logger = logging.getLogger("mcp-atlassian")
+    if value is None:
+        logger.debug(f"Config {param_name}: None")
+    elif mask:
+        logger.debug(f"Config {param_name}: {mask_sensitive(value)}")
+    else:
+        logger.debug(f"Config {param_name}: {value}")

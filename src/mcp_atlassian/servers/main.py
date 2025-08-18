@@ -4,7 +4,6 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, Literal, Optional
 
-from cachetools import TTLCache
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_request
 from fastmcp.tools import Tool as FastMCPTool
@@ -22,6 +21,7 @@ from mcp_atlassian.jira.config import JiraConfig
 from mcp_atlassian.utils.io import is_read_only_mode
 from mcp_atlassian.utils.logging import mask_sensitive
 from mcp_atlassian.utils.tools import get_enabled_tools, should_include_tool
+from mcp_atlassian.utils.decorators import log_system_event
 
 from .confluence import confluence_mcp
 from .context import MainAppContext
@@ -30,13 +30,17 @@ from .jira import jira_mcp
 logger = logging.getLogger("mcp-atlassian.server.main")
 
 
-async def health_check(request: Request) -> JSONResponse:
-    return JSONResponse({"status": "ok"})
-
-
 @asynccontextmanager
 async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
     logger.info("Main Atlassian MCP server lifespan starting...")
+    
+    # 시스템 시작 이벤트 로깅
+    log_system_event(
+        event_type="startup",
+        version="1.0.0",
+        environment=os.getenv("ENVIRONMENT", "development")
+    )
+    
     read_only = is_read_only_mode()
     enabled_tools = get_enabled_tools()
 
@@ -93,6 +97,14 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
         raise
     finally:
         logger.info("Main Atlassian MCP server lifespan shutting down...")
+        
+        # 시스템 종료 이벤트 로깅
+        log_system_event(
+            event_type="shutdown",
+            version="1.0.0",
+            environment=os.getenv("ENVIRONMENT", "development")
+        )
+        
         # Perform any necessary cleanup here
         try:
             # Close any open connections if needed
@@ -238,12 +250,6 @@ class AtlassianMCP(FastMCP[MainAppContext]):
         )
         return app
 
-
-token_validation_cache: TTLCache[
-    int, tuple[bool, str | None, JiraFetcher | None, ConfluenceFetcher | None]
-] = TTLCache(maxsize=100, ttl=300)
-
-
 class UserTokenMiddleware(BaseHTTPMiddleware):
     """Middleware to extract Atlassian user tokens/credentials from Authorization headers."""
 
@@ -314,13 +320,6 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                 logger.debug(
                     "UserTokenMiddleware: No cloudId header provided, will use global config"
                 )
-
-            # Check for mcp-session-id header for debugging
-            mcp_session_id = request.headers.get("mcp-session-id")
-            if mcp_session_id:
-                logger.debug(
-                    f"UserTokenMiddleware: MCP-Session-ID header found: {mcp_session_id}"
-                )
                 
             if auth_header and auth_header.startswith("Bearer "):
                 token = auth_header.split(" ", 1)[1].strip()
@@ -373,11 +372,3 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
 main_mcp = AtlassianMCP(name="Atlassian MCP", lifespan=main_lifespan)
 main_mcp.mount("jira", jira_mcp)
 main_mcp.mount("confluence", confluence_mcp)
-
-
-@main_mcp.custom_route("/healthz", methods=["GET"], include_in_schema=False)
-async def _health_check_route(request: Request) -> JSONResponse:
-    return await health_check(request)
-
-
-logger.info("Added /healthz endpoint for Kubernetes probes")

@@ -33,7 +33,7 @@
 │  (Container     │    │  (Container         │
 │   Apps)         │    │   Apps)             │
 └─────────┬───────┘    └─────────┬───────────┘
-          │                      │
+│                      │
           ▼                      ▼
 ┌─────────────────┐    ┌─────────────────────┐
 │   Jira Cloud    │    │   Confluence Cloud  │
@@ -203,17 +203,14 @@ az containerapp logs show \
   --follow
 ```
 
-### 헬스체크
+### 서비스 모니터링
 
-각 서비스는 `/healthz` 엔드포인트를 제공합니다:
+Azure Container Apps는 자체적으로 컨테이너 상태 모니터링을 제공합니다:
 
-```bash
-# Jira 서비스 헬스체크
-curl https://mcp-jira-service.koreacentral.azurecontainerapps.io/healthz
-
-# Confluence 서비스 헬스체크
-curl https://mcp-confluence-service.koreacentral.azurecontainerapps.io/healthz
-```
+- **자동 재시작**: 컨테이너가 비정상 종료될 경우 자동으로 재시작
+- **상태 확인**: 컨테이너 프로세스 상태 모니터링
+- **메트릭**: CPU, 메모리, 네트워크 사용량 추적
+- **로그 수집**: 애플리케이션 로그 자동 수집 및 보관
 
 ## 스케일링
 

@@ -1,6 +1,15 @@
-"""Dependency providers for JiraFetcher and ConfluenceFetcher with context awareness.
+"""
+Dependency injection for MCP server components.
 
-Provides get_jira_fetcher and get_confluence_fetcher for use in tool functions.
+This module provides dependency injection functions for creating Jira and Confluence
+fetchers based on request context. The functions are optimized for stateless operation
+where each HTTP request creates fresh fetcher instances without caching.
+
+Stateless Optimization:
+- No request.state caching of fetcher instances
+- Fresh fetcher creation for each request  
+- Automatic resource cleanup via Python GC
+- Eliminates memory leaks and session accumulation
 """
 
 from __future__ import annotations
@@ -16,6 +25,7 @@ from starlette.requests import Request
 from mcp_atlassian.confluence import ConfluenceConfig, ConfluenceFetcher
 from mcp_atlassian.jira import JiraConfig, JiraFetcher
 from mcp_atlassian.servers.context import MainAppContext
+from mcp_atlassian.utils.decorators import log_auth_event
 
 if TYPE_CHECKING:
     from mcp_atlassian.confluence.config import (
@@ -109,6 +119,7 @@ def _create_user_config_for_fetcher(
 
 async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
     """Returns a JiraFetcher instance appropriate for the current request context.
+    Optimized for stateless operation - creates fresh fetcher for each request.
 
     Args:
         ctx: The FastMCP context.
@@ -119,19 +130,16 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
     Raises:
         ValueError: If configuration or credentials are invalid.
     """
-    logger.debug(f"get_jira_fetcher: ENTERED. Context ID: {id(ctx)}")
+    logger.debug(f"get_jira_fetcher: ENTERED (stateless mode). Context ID: {id(ctx)}")
     try:
         request: Request = get_http_request()
         logger.debug(
             f"get_jira_fetcher: In HTTP request context. Request URL: {request.url}. "
-            f"State.jira_fetcher exists: {hasattr(request.state, 'jira_fetcher') and request.state.jira_fetcher is not None}. "
             f"State.user_auth_type: {getattr(request.state, 'user_atlassian_auth_type', 'N/A')}. "
             f"State.user_token_present: {hasattr(request.state, 'user_atlassian_token') and request.state.user_atlassian_token is not None}."
         )
-        # Use fetcher from request.state if already present
-        if hasattr(request.state, "jira_fetcher") and request.state.jira_fetcher:
-            logger.debug("get_jira_fetcher: Returning JiraFetcher from request.state.")
-            return request.state.jira_fetcher
+        
+        # Stateless: 항상 새로운 fetcher 생성 (캐싱 제거)
         user_auth_type = getattr(request.state, "user_atlassian_auth_type", None)
         user_token = getattr(request.state, "user_atlassian_token", None)
         
@@ -185,6 +193,15 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
             logger.info(
                 f"Creating user-specific JiraFetcher (type: {user_auth_type}) for user {user_email or 'unknown'} (token ...{str(user_token)[-8:]}){cloud_id_info}"
             )
+            
+            # 인증 시도 이벤트 로깅
+            log_auth_event(
+                event_type="login_attempt",
+                service="jira",
+                user=user_email,
+                auth_type=user_auth_type
+            )
+            
             user_specific_config = _create_user_config_for_fetcher(
                 base_config=base_config,
                 auth_type=user_auth_type,
@@ -197,13 +214,33 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
                 logger.debug(
                     f"get_jira_fetcher: Validated Jira token for user ID: {current_user_id}"
                 )
-                request.state.jira_fetcher = user_jira_fetcher
+                
+                # 인증 성공 이벤트 로깅
+                log_auth_event(
+                    event_type="login_success",
+                    service="jira",
+                    user=user_email,
+                    user_id=current_user_id
+                )
+                
+                # Stateless: request.state에 저장하지 않음 (매번 새로 생성)
                 return user_jira_fetcher
             except Exception as e:
                 logger.error(
                     f"get_jira_fetcher: Failed to create/validate user-specific JiraFetcher: {e}",
                     exc_info=True,
                 )
+                
+                # 인증 실패 이벤트 로깅 (더 상세한 정보 포함)
+                log_auth_event(
+                    event_type="login_failed",
+                    service="jira",
+                    user=user_email,
+                    error_message=str(e)[:200],
+                    error_type=type(e).__name__,
+                    auth_type=user_auth_type
+                )
+                
                 raise ValueError(f"Invalid user Jira token or configuration: {e}")
         else:
             logger.debug(
@@ -245,6 +282,7 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
 
 async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
     """Returns a ConfluenceFetcher instance appropriate for the current request context.
+    Optimized for stateless operation - creates fresh fetcher for each request.
 
     Args:
         ctx: The FastMCP context.
@@ -255,23 +293,16 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
     Raises:
         ValueError: If configuration or credentials are invalid.
     """
-    logger.debug(f"get_confluence_fetcher: ENTERED. Context ID: {id(ctx)}")
+    logger.debug(f"get_confluence_fetcher: ENTERED (stateless mode). Context ID: {id(ctx)}")
     try:
         request: Request = get_http_request()
         logger.debug(
             f"get_confluence_fetcher: In HTTP request context. Request URL: {request.url}. "
-            f"State.confluence_fetcher exists: {hasattr(request.state, 'confluence_fetcher') and request.state.confluence_fetcher is not None}. "
             f"State.user_auth_type: {getattr(request.state, 'user_atlassian_auth_type', 'N/A')}. "
             f"State.user_token_present: {hasattr(request.state, 'user_atlassian_token') and request.state.user_atlassian_token is not None}."
         )
-        if (
-            hasattr(request.state, "confluence_fetcher")
-            and request.state.confluence_fetcher
-        ):
-            logger.debug(
-                "get_confluence_fetcher: Returning ConfluenceFetcher from request.state."
-            )
-            return request.state.confluence_fetcher
+        
+        # Stateless: 항상 새로운 fetcher 생성 (캐싱 제거)
         user_auth_type = getattr(request.state, "user_atlassian_auth_type", None)
         user_token = getattr(request.state, "user_atlassian_token", None)
         
@@ -322,6 +353,15 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
             logger.info(
                 f"Creating user-specific ConfluenceFetcher (type: {user_auth_type}) for user {user_email or 'unknown'} (token ...{str(user_token)[-8:]}){cloud_id_info}"
             )
+            
+            # 인증 시도 이벤트 로깅
+            log_auth_event(
+                event_type="login_attempt",
+                service="confluence",
+                user=user_email,
+                auth_type=user_auth_type
+            )
+            
             user_specific_config = _create_user_config_for_fetcher(
                 base_config=base_config,
                 auth_type=user_auth_type,
@@ -345,7 +385,17 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
                 logger.debug(
                     f"get_confluence_fetcher: Validated Confluence token. User context: Email='{user_email or derived_email}', DisplayName='{display_name}'"
                 )
-                request.state.confluence_fetcher = user_confluence_fetcher
+                
+                # 인증 성공 이벤트 로깅
+                log_auth_event(
+                    event_type="login_success",
+                    service="confluence",
+                    user=user_email or derived_email,
+                    display_name=display_name
+                )
+                
+                # Stateless: request.state에 저장하지 않음 (매번 새로 생성)
+                # 사용자 이메일 정보만 필요시 업데이트 (토큰 검증 성공 후)
                 if (
                     not user_email
                     and derived_email
@@ -357,8 +407,20 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
                 return user_confluence_fetcher
             except Exception as e:
                 logger.error(
-                    f"get_confluence_fetcher: Failed to create/validate user-specific ConfluenceFetcher: {e}"
+                    f"get_confluence_fetcher: Failed to create/validate user-specific ConfluenceFetcher: {e}",
+                    exc_info=False  # 스택 트레이스 출력 방지
                 )
+                
+                # 인증 실패 이벤트 로깅 (더 상세한 정보 포함)
+                log_auth_event(
+                    event_type="login_failed",
+                    service="confluence",
+                    user=user_email,
+                    error_message=str(e)[:200],
+                    error_type=type(e).__name__,
+                    auth_type=user_auth_type
+                )
+                
                 raise ValueError(f"Invalid user Confluence token or configuration: {e}")
         else:
             logger.debug(

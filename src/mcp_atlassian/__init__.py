@@ -21,9 +21,9 @@ except PackageNotFoundError:
     __version__ = "0.0.0"
 
 # Initialize logging with appropriate level
-logging_level = logging.WARNING
+logging_level = logging.INFO  # 기본값을 INFO로 변경 (MCP 요청/응답 로그 표시)
 if is_env_truthy("MCP_VERBOSE"):
-    logging_level = logging.DEBUG
+    logging_level = logging.DEBUG  # MCP_VERBOSE는 이제 DEBUG 레벨로
 
 # Set up logging to STDOUT if MCP_LOGGING_STDOUT is set to true
 logging_stream = sys.stdout if is_env_truthy("MCP_LOGGING_STDOUT") else sys.stderr
@@ -184,13 +184,11 @@ def main(
     elif verbose >= 2:  # -vv or more
         current_logging_level = logging.DEBUG
     else:
-        # Default to DEBUG if MCP_VERY_VERBOSE is set, else INFO if MCP_VERBOSE is set, else WARNING
-        if is_env_truthy("MCP_VERY_VERBOSE", "false"):
+        # Default to INFO (changed from WARNING), DEBUG only if MCP_VERBOSE is set
+        if is_env_truthy("MCP_VERBOSE", "false"):
             current_logging_level = logging.DEBUG
-        elif is_env_truthy("MCP_VERBOSE", "false"):
-            current_logging_level = logging.INFO
         else:
-            current_logging_level = logging.WARNING
+            current_logging_level = logging.INFO  # 기본값을 INFO로 변경
 
     # Set up logging to STDOUT if MCP_LOGGING_STDOUT is set to true
     logging_stream = sys.stdout if is_env_truthy("MCP_LOGGING_STDOUT") else sys.stderr
@@ -200,8 +198,9 @@ def main(
     logger.debug(f"Logging level set to: {logging.getLevelName(current_logging_level)}")
     logger.debug(
         f"Logging stream set to: {'stdout' if logging_stream is sys.stdout else 'stderr'}"
-    )
-
+    )    
+    
+    # 옵션이 제공되었는지 확인하는 함수
     def was_option_provided(ctx: click.Context, param_name: str) -> bool:
         return (
             ctx.get_parameter_source(param_name)

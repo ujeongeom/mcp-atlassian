@@ -776,25 +776,6 @@ class TestMCPProtocolIntegration:
                             "confluence_get_page",
                         ]
 
-    async def test_health_check_endpoint(self, atlassian_mcp_server):
-        """Test the health check endpoint."""
-        # Mock the http_app method to return a test app
-        test_app = Starlette()
-        test_app.add_route("/healthz", health_check, methods=["GET"])
-
-        # Mock the method
-        atlassian_mcp_server.http_app = MagicMock(return_value=test_app)
-
-        # Create test client
-        app = atlassian_mcp_server.http_app()
-
-        # Use TestClient for synchronous testing of the Starlette app
-        with TestClient(app) as client:
-            response = client.get("/healthz")
-
-        assert response.status_code == 200
-        assert response.json() == {"status": "ok"}
-
     async def test_combined_filtering_scenarios(
         self, atlassian_mcp_server, mock_jira_config
     ):

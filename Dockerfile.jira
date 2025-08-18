@@ -1,6 +1,9 @@
 # Use a Python image with uv pre-installed
 FROM ghcr.io/astral-sh/uv:python3.10-alpine AS uv
 
+# Install build dependencies for compiling Python packages like psutil
+RUN apk add --no-cache gcc python3-dev musl-dev linux-headers
+
 # Install the project into `/app`
 WORKDIR /app
 
@@ -36,9 +39,6 @@ RUN find /app/.venv -name '__pycache__' -type d -exec rm -rf {} + && \
 # Final stage
 FROM python:3.10-alpine
 
-# Install wget for health check
-RUN apk add --no-cache wget
-
 # Create a non-root user 'app'
 RUN adduser -D -h /home/app -s /bin/sh app
 WORKDIR /app
@@ -55,9 +55,5 @@ ENV PORT=9000
 ENV MCP_LOGGING_STDOUT=true
 
 EXPOSE 9000
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:9000/mcp || exit 1
 
 ENTRYPOINT ["mcp-atlassian-jira"] 

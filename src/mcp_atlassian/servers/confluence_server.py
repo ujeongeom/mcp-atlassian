@@ -13,7 +13,9 @@ from mcp_atlassian.utils.tools import get_enabled_tools
 
 from .confluence import confluence_mcp
 
-logger = logging.getLogger("mcp-atlassian.confluence-server")
+from mcp_atlassian.utils.logging import get_logger
+
+logger = get_logger("confluence")
 
 @asynccontextmanager
 async def confluence_standalone_lifespan(app) -> AsyncIterator[dict]:

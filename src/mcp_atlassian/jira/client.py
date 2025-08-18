@@ -20,7 +20,8 @@ from mcp_atlassian.utils.ssl import configure_ssl_verification
 from .config import JiraConfig
 
 # Configure logging
-logger = logging.getLogger("mcp-jira")
+from mcp_atlassian.utils.logging import get_logger
+logger = get_logger("jira")
 
 
 class JiraClient:

@@ -13,7 +13,8 @@ from ..utils.ssl import configure_ssl_verification
 from .config import ConfluenceConfig
 
 # Configure logging
-logger = logging.getLogger("mcp-atlassian")
+from mcp_atlassian.utils.logging import get_logger
+logger = get_logger("confluence")
 
 
 class ConfluenceClient:

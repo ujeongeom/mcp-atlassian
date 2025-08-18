@@ -843,6 +843,76 @@ To verify custom headers are being applied correctly:
 
 **Security Note**: Header values containing sensitive information (tokens, passwords) are automatically masked in logs to prevent accidental exposure.
 
+### MCP 요청/응답 로깅
+
+MCP 서버의 요청/응답 로그를 확인하려면 다음과 같이 설정하세요:
+
+#### 1. 로깅 활성화
+
+```bash
+# 환경 변수 설정
+export MCP_VERY_VERBOSE=true
+export MCP_LOGGING_STDOUT=true
+export MCP_HTTP_DEBUG=true
+```
+
+#### 2. 서버 실행
+
+```bash
+# Jira 전용 서버
+python -m src.mcp_atlassian.servers.jira_server
+
+# Confluence 전용 서버
+python -m src.mcp_atlassian.servers.confluence_server
+
+# 통합 서버
+uvx mcp-atlassian --verbose
+```
+
+#### 3. 로그 확인
+
+```bash
+# 실시간 로그 확인
+tail -f /dev/stdout  # MCP_LOGGING_STDOUT=true인 경우
+tail -f /dev/stderr  # 기본 stderr 출력
+
+# MCP 요청/응답만 확인
+grep 'MCP_REQUEST\|MCP_RESPONSE'
+
+# 특정 도구만 확인
+grep 'get_user_profile'
+
+# HTTP 요청만 확인
+grep 'urllib3\|requests'
+```
+
+#### 4. 로그 형식
+
+**MCP 요청 로그:**
+```
+INFO - mcp-atlassian.jira - MCP_REQUEST: {"tool": "get_user_profile", "args": (), "kwargs": {"user_identifier": "user@example.com"}, "timestamp": 1234567890.123}
+```
+
+**MCP 응답 로그:**
+```
+INFO - mcp-atlassian.jira - MCP_RESPONSE: {"tool": "get_user_profile", "status": "success", "execution_time_ms": 245.67, "result_length": 1024, "timestamp": 1234567890.368}
+```
+
+**에러 응답 로그:**
+```
+ERROR - mcp-atlassian.jira - MCP_RESPONSE: {"tool": "get_user_profile", "status": "error", "error_type": "ValueError", "error_message": "User not found", "execution_time_ms": 12.34, "timestamp": 1234567890.456}
+```
+
+#### 5. 테스트 스크립트
+
+```bash
+# MCP 로깅 테스트
+python scripts/test_mcp_logging.py
+
+# HTTP 로깅 테스트
+python scripts/test_http_logging.py
+```
+
 ### Debugging Tools
 
 ```bash
